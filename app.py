@@ -146,7 +146,7 @@ def center_text(fb, s, f, color):
 
 
 def place_text(fb, s, f, color, corner):
-    """Put the visible pixels of s PAD from a screen corner: tl, tr, bl or br."""
+    """Put the visible pixels of s PAD from a screen corner: tl, tc, tr, bl or br."""
     idx = f[1]
     ink_c = [c for c in s if idx[c][5] > idx[c][4]]
     left = idx[s[0]][2]
@@ -154,7 +154,12 @@ def place_text(fb, s, f, color, corner):
     ink_w = text_w(s, f) - left - (last[0] - last[3])
     top = min(idx[c][4] for c in ink_c)
     bot = max(idx[c][5] for c in ink_c)
-    x = PAD - left if corner[1] == "l" else W - PAD - ink_w - left
+    if corner[1] == "l":
+        x = PAD - left
+    elif corner[1] == "c":
+        x = (W - ink_w) // 2 - left
+    else:
+        x = W - PAD - ink_w - left
     y = PAD - top if corner[0] == "t" else H - PAD - bot
     text_big(fb, s, x, y, f, color)
 
@@ -212,7 +217,7 @@ def render(heart_on, overlay):
     fb.fill(BLACK)
     # age, top
     s, col = age_text()
-    place_text(fb, s, font.MED, col, "tl")
+    place_text(fb, s, font.MED, col, "tc")
     # heart, top right
     if heart_on:
         place_icon(fb, "heart", RED, "tr")
