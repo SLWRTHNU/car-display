@@ -1,8 +1,7 @@
 # Car BG display. Lives in GitHub, pulled to the Pico on boot when version.txt changes.
 # Board: Raspberry Pi Pico 2 W (MicroPython)  Display: Waveshare Pico-ResTouch-LCD-2.8
-import time, gc, math, framebuf, network, ntptime
+import time, gc, framebuf, network, ntptime
 from machine import Pin, PWM, SPI
-from array import array
 import config
 import font
 
@@ -23,9 +22,14 @@ LEVELS = [1, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100]
 UNIX_OFFSET = 946684800 if time.gmtime(0)[0] == 2000 else 0
 
 
+_RGB = {}
+
+
 def rgb(r, g, b):
     c = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3)
-    return ((c & 0xFF) << 8) | (c >> 8)   # byte swapped for the ST7789
+    v = ((c & 0xFF) << 8) | (c >> 8)   # byte swapped for the ST7789
+    _RGB[v] = (r, g, b)
+    return v
 
 
 BLACK = rgb(0, 0, 0)
@@ -89,7 +93,25 @@ class LCD:
 
 
 # ---------- Drawing helpers ----------
-_pal = framebuf.FrameBuffer(bytearray(4), 2, 1, framebuf.RGB565)
+_pals = {}
+_gbuf = bytearray(font.GLYPH_MAX)
+_gmv = memoryview(_gbuf)
+
+
+def palette(fg, bg):
+    """16 shades from bg to fg, used to colorize antialiased glyphs."""
+    k = (fg, bg)
+    p = _pals.get(k)
+    if p is None:
+        p = framebuf.FrameBuffer(bytearray(32), 16, 1, framebuf.RGB565)
+        r1, g1, b1 = _RGB[fg]
+        r0, g0, b0 = _RGB[bg]
+        for i in range(16):
+            p.pixel(i, 0, rgb(r0 + (r1 - r0) * i // 15,
+                              g0 + (g1 - g0) * i // 15,
+                              b0 + (b1 - b0) * i // 15))
+        _pals[k] = p
+    return p
 
 
 def text_w(s, f):
@@ -97,47 +119,29 @@ def text_w(s, f):
     return sum(idx[c][0] for c in s if c in idx)
 
 
-def text_big(fb, s, x, y, f, color, bg=None):
-    H, idx, blob = f
-    _pal.pixel(0, 0, BLACK if bg is None else bg)
-    _pal.pixel(1, 0, color)
-    mv = memoryview(blob)
-    for ch in s:
-        g = idx.get(ch)
-        if g is None:
-            continue
-        w, off = g
-        n = ((w + 7) // 8) * H
-        fb.blit(framebuf.FrameBuffer(mv[off:off + n], w, H, framebuf.MONO_HLSB), x, y, -1, _pal)
-        x += w
+def text_big(fb, s, x, y, f, color, bg=BLACK):
+    H, idx, fn = f
+    pal = palette(color, bg)
+    with open(fn, "rb") as fh:
+        for ch in s:
+            g = idx.get(ch)
+            if g is None:
+                continue
+            w, off = g
+            n = ((w + 1) // 2) * H
+            fh.seek(off)
+            fh.readinto(_gmv[:n])
+            fb.blit(framebuf.FrameBuffer(_gmv[:n], w, H, framebuf.GS4_HMSB), x, y, -1, pal)
+            x += w
 
 
-def draw_arrow(fb, cx, cy, ang, length, color):
-    a = math.radians(ang)
-    dx, dy = math.cos(a), -math.sin(a)
-    px, py = -dy, dx
-    x0, y0 = cx - dx * length / 2, cy - dy * length / 2
-    x1, y1 = cx + dx * length / 2, cy + dy * length / 2
-    hw = 5      # shaft half width
-    hl = 26     # head length
-    hh = 17     # head half width
-    sx, sy = x1 - dx * hl, y1 - dy * hl
-    shaft = array('h', [int(x0 + px * hw), int(y0 + py * hw),
-                        int(sx + px * hw), int(sy + py * hw),
-                        int(sx - px * hw), int(sy - py * hw),
-                        int(x0 - px * hw), int(y0 - py * hw)])
-    fb.poly(0, 0, shaft, color, True)
-    head = array('h', [int(x1), int(y1),
-                       int(sx + px * hh), int(sy + py * hh),
-                       int(sx - px * hh), int(sy - py * hh)])
-    fb.poly(0, 0, head, color, True)
-
-
-def draw_heart(fb, x, y, color):
-    fb.ellipse(x - 8, y, 9, 9, color, True)
-    fb.ellipse(x + 8, y, 9, 9, color, True)
-    tri = array('h', [x - 16, y + 4, x + 16, y + 4, x, y + 24])
-    fb.poly(0, 0, tri, color, True)
+def icon(fb, name, x, y, color):
+    w, h, off = font.ICONS[name]
+    n = ((w + 1) // 2) * h
+    with open(font.ICONS_FILE, "rb") as fh:
+        fh.seek(off)
+        fh.readinto(_gmv[:n])
+    fb.blit(framebuf.FrameBuffer(_gmv[:n], w, h, framebuf.GS4_HMSB), x, y, -1, palette(color, BLACK))
 
 
 # ---------- State ----------
@@ -150,13 +154,6 @@ has_delta = False
 delta = 0
 direction = "Flat"
 last_epoch = 0
-
-DIRS = {
-    "DoubleUp": (90, True), "SingleUp": (90, False), "FortyFiveUp": (45, False),
-    "Flat": (0, False), "FortyFiveDown": (-45, False),
-    "SingleDown": (-90, False), "DoubleDown": (-90, True),
-}
-
 
 def bg_color():
     m = sgv / 18.0
@@ -187,23 +184,15 @@ def render(heart_on, overlay):
     text_big(fb, s, 10, 2, font.MED, col)
     # heart, top right
     if heart_on:
-        draw_heart(fb, 293, 14, RED)
+        icon(fb, "heart", 277, 6, RED)
     # BG, middle
     if have:
         s = "%.1f" % (sgv / 18.0)
         f = font.BIG1 if len(s) <= 3 else font.BIG2
         text_big(fb, s, (W - text_w(s, f)) // 2, 58 + (font.BIG1[0] - f[0]) // 2, f, bg_color())
         # trend arrow, bottom left
-        if direction in DIRS:
-            ang, dbl = DIRS[direction]
-            c = bg_color()
-            if dbl:
-                a = math.radians(ang)
-                dx, dy = math.cos(a), -math.sin(a)
-                draw_arrow(fb, int(75 - dx * 14), int(205 - dy * 14), ang, 44, c)
-                draw_arrow(fb, int(75 + dx * 14), int(205 + dy * 14), ang, 44, c)
-            else:
-                draw_arrow(fb, 75, 205, ang, 60, c)
+        if direction in font.ICONS:
+            icon(fb, direction, 39, 168, bg_color())
         else:
             text_big(fb, "?", 62, 176, font.MED, GREY)
         # delta, bottom right

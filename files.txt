@@ -1,2 +1,7 @@
 app.py
 font.py
+f_big1.bin
+f_big2.bin
+f_med.bin
+f_small.bin
+f_icons.bin
