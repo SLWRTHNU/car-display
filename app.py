@@ -4,6 +4,7 @@ import time, gc, math, framebuf, network, ntptime
 from machine import Pin, PWM, SPI
 from array import array
 import config
+import font
 
 try:
     import requests
@@ -18,7 +19,8 @@ FETCH_MS = 30000
 LOW_MMOL = 3.9
 HIGH_MMOL = 10.0
 LEVELS = [1, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100]
-UNIX_OFFSET = 946684800   # MicroPython epoch is 2000, Nightscout uses 1970
+# Nightscout uses the 1970 epoch. Some MicroPython builds count from 2000, some from 1970.
+UNIX_OFFSET = 946684800 if time.gmtime(0)[0] == 2000 else 0
 
 
 def rgb(r, g, b):
@@ -87,23 +89,27 @@ class LCD:
 
 
 # ---------- Drawing helpers ----------
-_cbuf = bytearray(8)
-_cfb = framebuf.FrameBuffer(_cbuf, 8, 8, framebuf.MONO_HLSB)
+_pal = framebuf.FrameBuffer(bytearray(4), 2, 1, framebuf.RGB565)
 
 
-def text_w(s, scale):
-    return len(s) * 8 * scale
+def text_w(s, f):
+    idx = f[1]
+    return sum(idx[c][0] for c in s if c in idx)
 
 
-def text_big(fb, s, x, y, scale, color):
+def text_big(fb, s, x, y, f, color, bg=None):
+    H, idx, blob = f
+    _pal.pixel(0, 0, BLACK if bg is None else bg)
+    _pal.pixel(1, 0, color)
+    mv = memoryview(blob)
     for ch in s:
-        _cfb.fill(0)
-        _cfb.text(ch, 0, 0, 1)
-        for row in range(8):
-            for col in range(8):
-                if _cfb.pixel(col, row):
-                    fb.fill_rect(x + col * scale, y + row * scale, scale, scale, color)
-        x += 8 * scale
+        g = idx.get(ch)
+        if g is None:
+            continue
+        w, off = g
+        n = ((w + 7) // 8) * H
+        fb.blit(framebuf.FrameBuffer(mv[off:off + n], w, H, framebuf.MONO_HLSB), x, y, -1, _pal)
+        x += w
 
 
 def draw_arrow(fb, cx, cy, ang, length, color):
@@ -178,14 +184,15 @@ def render(heart_on, overlay):
     fb.fill(BLACK)
     # age, top
     s, col = age_text()
-    text_big(fb, s, 10, 8, 4, col)
+    text_big(fb, s, 10, 2, font.MED, col)
     # heart, top right
     if heart_on:
-        draw_heart(fb, 291, 14, RED)
+        draw_heart(fb, 293, 14, RED)
     # BG, middle
     if have:
         s = "%.1f" % (sgv / 18.0)
-        text_big(fb, s, (W - text_w(s, 9)) // 2, 62, 9, bg_color())
+        f = font.BIG1 if len(s) <= 3 else font.BIG2
+        text_big(fb, s, (W - text_w(s, f)) // 2, 58 + (font.BIG1[0] - f[0]) // 2, f, bg_color())
         # trend arrow, bottom left
         if direction in DIRS:
             ang, dbl = DIRS[direction]
@@ -198,17 +205,17 @@ def render(heart_on, overlay):
             else:
                 draw_arrow(fb, 75, 205, ang, 60, c)
         else:
-            text_big(fb, "?", 60, 185, 5, GREY)
+            text_big(fb, "?", 62, 176, font.MED, GREY)
         # delta, bottom right
         if has_delta:
             s = "%+.1f" % (delta / 18.0)
-            text_big(fb, s, 312 - text_w(s, 4), 190, 4, WHITE)
+            text_big(fb, s, 312 - text_w(s, font.MED), 176, font.MED, WHITE)
     else:
-        text_big(fb, "--", (W - text_w("--", 9)) // 2, 62, 9, GREY)
+        text_big(fb, "--", (W - text_w("--", font.BIG1)) // 2, 58, font.BIG1, GREY)
     # brightness overlay
     if overlay:
-        fb.fill_rect(30, 95, 260, 50, GREY)
-        text_big(fb, overlay, (W - text_w(overlay, 2)) // 2, 112, 2, WHITE)
+        fb.fill_rect(5, 94, 310, 52, GREY)
+        text_big(fb, overlay, (W - text_w(overlay, font.SMALL)) // 2, 101, font.SMALL, WHITE, GREY)
 
 
 def fetch():
