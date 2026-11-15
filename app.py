@@ -14,6 +14,7 @@ except ImportError:
 W, H = 320, 240
 MADCTL = 0x70        # if the screen is upside down or mirrored try 0xA0, 0xB0 or 0xC0
 INVERT = True        # if colors look inverted set to False
+PAD = 8              # padding from the screen edges, in pixels
 FETCH_MS = 30000
 LOW_MMOL = 3.9
 HIGH_MMOL = 10.0
@@ -144,8 +145,29 @@ def center_text(fb, s, f, color):
     text_big(fb, s, (W - ink) // 2 - left, (240 - H) // 2, f, color)
 
 
+def place_text(fb, s, f, color, corner):
+    """Put the visible pixels of s PAD from a screen corner: tl, tr, bl or br."""
+    idx = f[1]
+    ink_c = [c for c in s if idx[c][5] > idx[c][4]]
+    left = idx[s[0]][2]
+    last = idx[s[-1]]
+    ink_w = text_w(s, f) - left - (last[0] - last[3])
+    top = min(idx[c][4] for c in ink_c)
+    bot = max(idx[c][5] for c in ink_c)
+    x = PAD - left if corner[1] == "l" else W - PAD - ink_w - left
+    y = PAD - top if corner[0] == "t" else H - PAD - bot
+    text_big(fb, s, x, y, f, color)
+
+
+def place_icon(fb, name, color, corner):
+    w, h, off, l, t, r, b = font.ICONS[name]
+    x = PAD - l if corner[1] == "l" else W - PAD - r
+    y = PAD - t if corner[0] == "t" else H - PAD - b
+    icon(fb, name, x, y, color)
+
+
 def icon(fb, name, x, y, color):
-    w, h, off = font.ICONS[name]
+    w, h, off = font.ICONS[name][:3]
     n = ((w + 1) // 2) * h
     with open(font.ICONS_FILE, "rb") as fh:
         fh.seek(off)
@@ -190,10 +212,10 @@ def render(heart_on, overlay):
     fb.fill(BLACK)
     # age, top
     s, col = age_text()
-    text_big(fb, s, 10, 2, font.MED, col)
+    place_text(fb, s, font.MED, col, "tl")
     # heart, top right
     if heart_on:
-        icon(fb, "heart", 277, 6, RED)
+        place_icon(fb, "heart", RED, "tr")
     # BG, middle
     if have:
         s = "%.1f" % (sgv / 18.0)
@@ -201,13 +223,13 @@ def render(heart_on, overlay):
         center_text(fb, s, f, bg_color())
         # trend arrow, bottom left
         if direction in font.ICONS:
-            icon(fb, direction, 39, 168, bg_color())
+            place_icon(fb, direction, bg_color(), "bl")
         else:
-            text_big(fb, "?", 62, 176, font.MED, GREY)
+            place_text(fb, "?", font.MED, GREY, "bl")
         # delta, bottom right
         if has_delta:
             s = "%+.1f" % (delta / 18.0)
-            text_big(fb, s, 312 - text_w(s, font.MED), 176, font.MED, WHITE)
+            place_text(fb, s, font.MED, WHITE, "br")
     else:
         center_text(fb, "--", font.BIG1, GREY)
     # brightness overlay
