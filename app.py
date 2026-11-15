@@ -17,7 +17,7 @@ INVERT = True        # if colors look inverted set to False
 FETCH_MS = 30000
 LOW_MMOL = 3.9
 HIGH_MMOL = 10.0
-LEVELS = [1, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100]
+LEVELS = [100, 75, 50, 25, 1, 50]   # boot at 100%, each tap steps to the next, then loops
 # Nightscout uses the 1970 epoch. Some MicroPython builds count from 2000, some from 1970.
 UNIX_OFFSET = 946684800 if time.gmtime(0)[0] == 2000 else 0
 
