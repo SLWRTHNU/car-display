@@ -127,12 +127,21 @@ def text_big(fb, s, x, y, f, color, bg=BLACK):
             g = idx.get(ch)
             if g is None:
                 continue
-            w, off = g
+            w, off = g[0], g[1]
             n = ((w + 1) // 2) * H
             fh.seek(off)
             fh.readinto(_gmv[:n])
             fb.blit(framebuf.FrameBuffer(_gmv[:n], w, H, framebuf.GS4_HMSB), x, y, -1, pal)
             x += w
+
+
+def center_text(fb, s, f, color):
+    """Center s on the screen by its visible pixels, both ways."""
+    H, idx, fn = f
+    left = idx[s[0]][2]
+    right_trim = idx[s[-1]][0] - idx[s[-1]][3]
+    ink = text_w(s, f) - left - right_trim
+    text_big(fb, s, (W - ink) // 2 - left, (240 - H) // 2, f, color)
 
 
 def icon(fb, name, x, y, color):
@@ -189,7 +198,7 @@ def render(heart_on, overlay):
     if have:
         s = "%.1f" % (sgv / 18.0)
         f = font.BIG1 if len(s) <= 3 else font.BIG2
-        text_big(fb, s, (W - text_w(s, f)) // 2, 58 + (font.BIG1[0] - f[0]) // 2, f, bg_color())
+        center_text(fb, s, f, bg_color())
         # trend arrow, bottom left
         if direction in font.ICONS:
             icon(fb, direction, 39, 168, bg_color())
@@ -200,7 +209,7 @@ def render(heart_on, overlay):
             s = "%+.1f" % (delta / 18.0)
             text_big(fb, s, 312 - text_w(s, font.MED), 176, font.MED, WHITE)
     else:
-        text_big(fb, "--", (W - text_w("--", font.BIG1)) // 2, 58, font.BIG1, GREY)
+        center_text(fb, "--", font.BIG1, GREY)
     # brightness overlay
     if overlay:
         fb.fill_rect(5, 94, 310, 52, GREY)
